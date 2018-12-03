@@ -57,8 +57,6 @@ def predict_transform(prediction, inp_dim, anchors, num_classes, CUDA=USE_CUDA):
     bbox_attrs = 5 + num_classes
     num_anchors = len(anchors)
 
-    print(grid_size * grid_size)
-
     prediction = prediction.view(batch_size, bbox_attrs * num_anchors, grid_size * grid_size)
     prediction = prediction.transpose(1, 2).contiguous()
     prediction = prediction.view(batch_size, grid_size * grid_size * num_anchors, bbox_attrs)

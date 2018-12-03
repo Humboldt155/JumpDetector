@@ -70,6 +70,17 @@ class DetectionLayer(nn.Module):
         self.anchors = anchors
 
 
+class Interpolate(nn.Module):
+    def __init__(self, scale_factor, mode):
+        super(Interpolate, self).__init__()
+        self.interp = nn.functional.interpolate
+        self.scale_factor = scale_factor
+        self.mode = mode
+
+    def forward(self, x):
+        x = self.interp(x, scale_factor=self.scale_factor, mode=self.mode, align_corners=False)
+        return x
+
 def create_modules(blocks):
     net_info = blocks[0]  # Captures the information about the input and pre-processing
     module_list = nn.ModuleList()
@@ -121,9 +132,10 @@ def create_modules(blocks):
 
             # If it's an upsampling layer
             # We use Bilinear2dUpsampling
-        elif (x["type"] == "upsample"):
+        elif x["type"] == "upsample":
             stride = int(x["stride"])
-            upsample = nn.Upsample(scale_factor=2, mode="nearest")
+            upsample = Interpolate(scale_factor=2, mode='bilinear')
+            # upsample = nn.Upsample(scale_factor=2, mode="nearest")
             module.add_module("upsample_{}".format(index), upsample)
 
         # If it is a route layer
@@ -333,7 +345,7 @@ class Darknet(nn.Module):
 #     return img_
 
 
-input_size = 416
+input_size = 608
 trans_compose = transforms.Compose([
     transforms.Resize(input_size),
     transforms.CenterCrop(input_size),
@@ -346,6 +358,5 @@ img = Image.open("dog-cycle-car.png")
 
 model = Darknet("cfg/yolov3.cfg")
 inp = trans_compose(img).unsqueeze(0)
-print(inp.shape)
 pred = model(inp, torch.cuda.is_available())
 print (pred)
