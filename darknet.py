@@ -1,74 +1,30 @@
-
 from __future__ import division
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 import numpy as np
-from torchvision import transforms
 from util import *
-from PIL import Image
+from cfg import parse_cfg
 
-USE_CUDA = torch.cuda.is_available()
-device = torch.device("cuda" if USE_CUDA else "cpu")
-
-print(device)
-
-#%%
-
-def get_test_input():
-    img = cv2.imread("dog-cycle-car.png")
-    img = cv2.resize(img, (416, 416))  # Resize to the input dimension
-    img_ = img[:, :, ::-1].transpose((2, 0, 1))  # BGR -> RGB | H X W C -> C X H X W
-    img_ = img_[np.newaxis, :, :, :] / 255.0  # Add a channel at 0 (for batch) | Normalise
-    img_ = torch.from_numpy(img_).float()  # Convert to float
-    img_ = Variable(img_)  # Convert to Variable
-    return img_
+CUDA = torch.cuda.is_available()
 
 
-def parse_cfg(cfgfile):
-    """
-    Takes a configuration file
-
-    Returns a list of blocks. Each blocks describes a block in the neural
-    network to be built. Block is represented as a dictionary in the list
-
-    """
-
-    file = open(cfgfile, 'r')
-    lines = file.read().split('\n')  # store the lines in a list
-    lines = [x for x in lines if len(x) > 0]  # get read of the empty lines
-    lines = [x for x in lines if x[0] != '#']  # get rid of comments
-    lines = [x.rstrip().lstrip() for x in lines]  # get rid of fringe whitespaces
-
-    block = {}
-    blocks = []
-
-    for line in lines:
-        if line[0] == "[":  # This marks the start of a new block
-            if len(block) != 0:  # If block is not empty, implies it is storing values of previous block.
-                blocks.append(block)  # add it the blocks list
-                block = {}  # re-init the block
-            block["type"] = line[1:-1].rstrip()
-        else:
-            key, value = line.split("=")
-            block[key.rstrip()] = value.lstrip()
-    blocks.append(block)
-
-    return blocks
+def convert2cpu(matrix):
+    if matrix.is_cuda:
+        return torch.FloatTensor(matrix.size()).copy_(matrix)
+    else:
+        return matrix
 
 
 class EmptyLayer(nn.Module):
     def __init__(self):
         super(EmptyLayer, self).__init__()
 
-
 class DetectionLayer(nn.Module):
     def __init__(self, anchors):
         super(DetectionLayer, self).__init__()
         self.anchors = anchors
-
 
 class Interpolate(nn.Module):
     def __init__(self, scale_factor, mode):
@@ -82,7 +38,7 @@ class Interpolate(nn.Module):
         return x
 
 def create_modules(blocks):
-    net_info = blocks[0]  # Captures the information about the input and pre-processing
+    net_info = blocks[0]     #Captures the information about the input and pre-processing
     module_list = nn.ModuleList()
     prev_filters = 3
     output_filters = []
@@ -90,13 +46,13 @@ def create_modules(blocks):
     for index, x in enumerate(blocks[1:]):
         module = nn.Sequential()
 
-        # check the type of block
-        # create a new module for the block
-        # append to module_list
+        #check the type of block
+        #create a new module for the block
+        #append to module_list
 
-        # If it's a convolutional layer
+        #If it's a convolutional layer
         if (x["type"] == "convolutional"):
-            # Get the info about the layer
+            #Get the info about the layer
             activation = x["activation"]
             try:
                 batch_normalize = int(x["batch_normalize"])
@@ -105,7 +61,7 @@ def create_modules(blocks):
                 batch_normalize = 0
                 bias = True
 
-            filters = int(x["filters"])
+            filters= int(x["filters"])
             padding = int(x["pad"])
             kernel_size = int(x["size"])
             stride = int(x["stride"])
@@ -115,40 +71,40 @@ def create_modules(blocks):
             else:
                 pad = 0
 
-            # Add the convolutional layer
-            conv = nn.Conv2d(prev_filters, filters, kernel_size, stride, pad, bias=bias)
+            #Add the convolutional layer
+            conv = nn.Conv2d(prev_filters, filters, kernel_size, stride, pad, bias = bias)
             module.add_module("conv_{0}".format(index), conv)
 
-            # Add the Batch Norm Layer
+            #Add the Batch Norm Layer
             if batch_normalize:
                 bn = nn.BatchNorm2d(filters)
                 module.add_module("batch_norm_{0}".format(index), bn)
 
-            # Check the activation.
-            # It is either Linear or a Leaky ReLU for YOLO
+            #Check the activation.
+            #It is either Linear or a Leaky ReLU for YOLO
             if activation == "leaky":
-                activn = nn.LeakyReLU(0.1, inplace=True)
+                activn = nn.LeakyReLU(0.1, inplace = True)
                 module.add_module("leaky_{0}".format(index), activn)
 
-            # If it's an upsampling layer
-            # We use Bilinear2dUpsampling
-        elif x["type"] == "upsample":
+            #If it's an upsampling layer
+            #We use Bilinear2dUpsampling
+        elif (x["type"] == "upsample"):
             stride = int(x["stride"])
             upsample = Interpolate(scale_factor=2, mode='bilinear')
             # upsample = nn.Upsample(scale_factor=2, mode="nearest")
             module.add_module("upsample_{}".format(index), upsample)
 
-        # If it is a route layer
+        #If it is a route layer
         elif (x["type"] == "route"):
             x["layers"] = x["layers"].split(',')
-            # Start  of a route
+            #Start  of a route
             start = int(x["layers"][0])
-            # end, if there exists one.
+            #end, if there exists one.
             try:
                 end = int(x["layers"][1])
             except:
                 end = 0
-            # Positive anotation
+            #Positive anotation
             if start > 0:
                 start = start - index
             if end > 0:
@@ -158,21 +114,21 @@ def create_modules(blocks):
             if end < 0:
                 filters = output_filters[index + start] + output_filters[index + end]
             else:
-                filters = output_filters[index + start]
+                filters= output_filters[index + start]
 
-        # shortcut corresponds to skip connection
+        #shortcut corresponds to skip connection
         elif x["type"] == "shortcut":
             shortcut = EmptyLayer()
             module.add_module("shortcut_{}".format(index), shortcut)
 
-        # Yolo is the detection layer
+        #Yolo is the detection layer
         elif x["type"] == "yolo":
             mask = x["mask"].split(",")
             mask = [int(x) for x in mask]
 
             anchors = x["anchors"].split(",")
             anchors = [int(a) for a in anchors]
-            anchors = [(anchors[i], anchors[i + 1]) for i in range(0, len(anchors), 2)]
+            anchors = [(anchors[i], anchors[i+1]) for i in range(0, len(anchors),2)]
             anchors = [anchors[i] for i in mask]
 
             detection = DetectionLayer(anchors)
@@ -184,16 +140,16 @@ def create_modules(blocks):
 
     return (net_info, module_list)
 
-
 class Darknet(nn.Module):
-    def __init__(self, cfgfile):
+    def __init__(self, cfgfile, train=True):
         super(Darknet, self).__init__()
         self.blocks = parse_cfg(cfgfile)
         self.net_info, self.module_list = create_modules(self.blocks)
+        self.training = train
 
     def forward(self, x, CUDA):
         modules = self.blocks[1:]
-        outputs = {}  # We cache the outputs for the route layer
+        outputs = {}   #We cache the outputs for the route layer
 
         write = 0
         for i, module in enumerate(modules):
@@ -221,56 +177,150 @@ class Darknet(nn.Module):
                     x = torch.cat((map1, map2), 1)
 
 
-            elif module_type == "shortcut":
+            elif  module_type == "shortcut":
                 from_ = int(module["from"])
-                x = outputs[i - 1] + outputs[i + from_]
+                x = outputs[i-1] + outputs[i+from_]
+
 
             elif module_type == 'yolo':
+
                 anchors = self.module_list[i][0].anchors
+
                 # Get the input dimensions
                 inp_dim = int(self.net_info["height"])
 
                 # Get the number of classes
-                num_classes = int(module["classes"])
+                num_classes = int(modules[i]["classes"])
 
-                # Transform
-                x = x.data
-                x = x.to(device)          # -------------------------------------------------- Не было
-                x = predict_transform(x, inp_dim, anchors, num_classes, CUDA)
-                if not write:  # if no collector has been intialised.
+                # Output the result
+                if not self.training:
+                    x = x.data
+
+                x = predict_transform(x, inp_dim, anchors, num_classes, CUDA=CUDA, train=self.training)
+
+                if type(x) == int:
+                    continue
+
+                if not write:
                     detections = x
                     write = 1
-
                 else:
                     detections = torch.cat((detections, x), 1)
+                outputs[i] = outputs[i - 1]
 
             outputs[i] = x
 
         return detections
 
-    def load_weights(self, weightfile):
-        # Open the weights file
+    def load_weights(self, weightfile, stop = None):
+        #Open the weights file
         fp = open(weightfile, "rb")
 
-        # The first 5 values are header information
+        #The first 5 values are header information
         # 1. Major version number
         # 2. Minor Version Number
         # 3. Subversion number
         # 4,5. Images seen by the network (during training)
-        header = np.fromfile(fp, dtype=np.int32, count=5)
+        header = np.fromfile(fp, dtype = np.int32, count = 5)
         self.header = torch.from_numpy(header)
         self.seen = self.header[3]
 
-        weights = np.fromfile(fp, dtype=np.float32)
+        weights = np.fromfile(fp, dtype = np.float32)
 
         ptr = 0
         for i in range(len(self.module_list)):
             module_type = self.blocks[i + 1]["type"]
 
-            # If module_type is convolutional load weights
-            # Otherwise ignore.
+            if stop != None and (i == stop + 1):
+                return
+
+            #If module_type is convolutional load weights
+            #Otherwise ignore.
 
             if module_type == "convolutional":
+                model = self.module_list[i]
+                try:
+                    batch_normalize = int(self.blocks[i+1]["batch_normalize"])
+                except:
+                    batch_normalize = 0
+
+                conv = model[0]
+
+
+                if (batch_normalize):
+                    bn = model[1]
+
+                    #Get the number of weights of Batch Norm Layer
+                    num_bn_biases = bn.bias.numel()
+
+                    #Load the weights
+                    bn_biases = torch.from_numpy(weights[ptr:ptr + num_bn_biases])
+                    ptr += num_bn_biases
+
+                    bn_weights = torch.from_numpy(weights[ptr: ptr + num_bn_biases])
+                    ptr  += num_bn_biases
+
+                    bn_running_mean = torch.from_numpy(weights[ptr: ptr + num_bn_biases])
+                    ptr  += num_bn_biases
+
+                    bn_running_var = torch.from_numpy(weights[ptr: ptr + num_bn_biases])
+                    ptr  += num_bn_biases
+
+                    #Cast the loaded weights into dims of model weights.
+                    bn_biases = bn_biases.view_as(bn.bias.data)
+                    bn_weights = bn_weights.view_as(bn.weight.data)
+                    bn_running_mean = bn_running_mean.view_as(bn.running_mean)
+                    bn_running_var = bn_running_var.view_as(bn.running_var)
+
+                    #Copy the data to model
+                    bn.bias.data.copy_(bn_biases)
+                    bn.weight.data.copy_(bn_weights)
+                    bn.running_mean.copy_(bn_running_mean)
+                    bn.running_var.copy_(bn_running_var)
+
+                else:
+                    #Number of biases
+                    num_biases = conv.bias.numel()
+
+                    #Load the weights
+                    conv_biases = torch.from_numpy(weights[ptr: ptr + num_biases])
+                    ptr = ptr + num_biases
+
+                    #reshape the loaded weights according to the dims of the model weights
+                    conv_biases = conv_biases.view_as(conv.bias.data)
+
+                    #Finally copy the data
+                    conv.bias.data.copy_(conv_biases)
+
+                #Let us load the weights for the Convolutional layers
+                num_weights = conv.weight.numel()
+
+                #Do the same as above for weights
+                conv_weights = torch.from_numpy(weights[ptr:ptr+num_weights])
+                ptr = ptr + num_weights
+
+                conv_weights = conv_weights.view_as(conv.weight.data)
+                conv.weight.data.copy_(conv_weights)
+
+    def save_weights(self, savedfile, cutoff=0):
+
+        if cutoff <= 0:
+            cutoff = len(self.blocks) - 1
+
+        fp = open(savedfile, 'wb')
+
+        # Attach the header at the top of the file
+        self.header[3] = self.seen
+        header = self.header
+
+        header = header.numpy()
+        header.tofile(fp)
+
+        # Now, let us save the weights
+        for i in range(len(self.module_list)):
+            module_type = self.blocks[i + 1]["type"]
+
+            if (module_type) == "convolutional":
                 model = self.module_list[i]
                 try:
                     batch_normalize = int(self.blocks[i + 1]["batch_normalize"])
@@ -282,81 +332,18 @@ class Darknet(nn.Module):
                 if (batch_normalize):
                     bn = model[1]
 
-                    # Get the number of weights of Batch Norm Layer
-                    num_bn_biases = bn.bias.numel()
+                    # If the parameters are on GPU, convert them back to CPU
+                    # We don't convert the parameter to GPU
+                    # Instead. we copy the parameter and then convert it to CPU
+                    # This is done as weight are need to be saved during training
+                    convert2cpu(bn.bias.data).numpy().tofile(fp)
+                    convert2cpu(bn.weight.data).numpy().tofile(fp)
+                    convert2cpu(bn.running_mean).numpy().tofile(fp)
+                    convert2cpu(bn.running_var).numpy().tofile(fp)
 
-                    # Load the weights
-                    bn_biases = torch.from_numpy(weights[ptr:ptr + num_bn_biases])
-                    ptr += num_bn_biases
-
-                    bn_weights = torch.from_numpy(weights[ptr: ptr + num_bn_biases])
-                    ptr += num_bn_biases
-
-                    bn_running_mean = torch.from_numpy(weights[ptr: ptr + num_bn_biases])
-                    ptr += num_bn_biases
-
-                    bn_running_var = torch.from_numpy(weights[ptr: ptr + num_bn_biases])
-                    ptr += num_bn_biases
-
-                    # Cast the loaded weights into dims of model weights.
-                    bn_biases = bn_biases.view_as(bn.bias.data)
-                    bn_weights = bn_weights.view_as(bn.weight.data)
-                    bn_running_mean = bn_running_mean.view_as(bn.running_mean)
-                    bn_running_var = bn_running_var.view_as(bn.running_var)
-
-                    # Copy the data to model
-                    bn.bias.data.copy_(bn_biases)
-                    bn.weight.data.copy_(bn_weights)
-                    bn.running_mean.copy_(bn_running_mean)
-                    bn.running_var.copy_(bn_running_var)
 
                 else:
-                    # Number of biases
-                    num_biases = conv.bias.numel()
+                    convert2cpu(conv.bias.data).numpy().tofile(fp)
 
-                    # Load the weights
-                    conv_biases = torch.from_numpy(weights[ptr: ptr + num_biases])
-                    ptr = ptr + num_biases
-
-                    # reshape the loaded weights according to the dims of the model weights
-                    conv_biases = conv_biases.view_as(conv.bias.data)
-
-                    # Finally copy the data
-                    conv.bias.data.copy_(conv_biases)
-
-                # Let us load the weights for the Convolutional layers
-                num_weights = conv.weight.numel()
-
-                # Do the same as above for weights
-                conv_weights = torch.from_numpy(weights[ptr:ptr + num_weights])
-                ptr = ptr + num_weights
-
-                conv_weights = conv_weights.view_as(conv.weight.data)
-                conv.weight.data.copy_(conv_weights)
-
-
-# def get_test_input():
-#     img = cv2.imread("dog-cycle-car.png")
-#     img = cv2.resize(img, (416,416))           # Resize to the input dimension
-#     img_ = img[:, :, ::-1].transpose((2, 0, 1))  # BGR -> RGB | H X W C -> C X H X W
-#     img_ = img_[np.newaxis, :, :, :]/255.0       # Add a channel at 0 (for batch) | Normalise
-#     img_ = torch.from_numpy(img_).float()     # Convert to float
-#     img_ = Variable(img_)                     # Convert to Variable
-#     return img_
-
-
-input_size = 608
-trans_compose = transforms.Compose([
-    transforms.Resize(input_size),
-    transforms.CenterCrop(input_size),
-    transforms.ToTensor(),
-    # transforms.Normalize(mean=[0.485, 0.456, 0.406],
-    #                      std=[0.229, 0.224, 0.225])
-])
-
-img = Image.open("dog-cycle-car.png")
-
-model = Darknet("cfg/yolov3.cfg")
-inp = trans_compose(img).unsqueeze(0)
-pred = model(inp, torch.cuda.is_available())
-print (pred)
+                # Let us save the weights for the Convolutional layers
+                convert2cpu(conv.weight.data).numpy().tofile(fp)

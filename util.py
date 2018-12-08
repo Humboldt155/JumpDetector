@@ -7,9 +7,6 @@ from torch.autograd import Variable
 import numpy as np
 import cv2
 
-USE_CUDA = torch.cuda.is_available()
-device = torch.device("cuda" if USE_CUDA else "cpu")
-
 
 def unique(tensor):
     tensor_np = tensor.cpu().numpy()
@@ -50,7 +47,7 @@ def bbox_iou(box1, box2):
     return iou
 
 
-def predict_transform(prediction, inp_dim, anchors, num_classes, CUDA=USE_CUDA):
+def predict_transform(prediction, inp_dim, anchors, num_classes, CUDA=True, train=False):
     batch_size = prediction.size(0)
     stride = inp_dim // prediction.size(2)
     grid_size = inp_dim // stride
@@ -60,6 +57,10 @@ def predict_transform(prediction, inp_dim, anchors, num_classes, CUDA=USE_CUDA):
     prediction = prediction.view(batch_size, bbox_attrs * num_anchors, grid_size * grid_size)
     prediction = prediction.transpose(1, 2).contiguous()
     prediction = prediction.view(batch_size, grid_size * grid_size * num_anchors, bbox_attrs)
+
+    if train:
+        return prediction
+
     anchors = [(a[0] / stride, a[1] / stride) for a in anchors]
 
     # Sigmoid the  centre_X, centre_Y. and object confidencce
@@ -80,8 +81,7 @@ def predict_transform(prediction, inp_dim, anchors, num_classes, CUDA=USE_CUDA):
 
     x_y_offset = torch.cat((x_offset, y_offset), 1).repeat(1, num_anchors).view(-1, 2).unsqueeze(0)
 
-    # print(prediction.shape)
-    # print(x_y_offset.shape)
+    prediction[:, :, :2] += x_y_offset
 
     # log space transform height and the width
     anchors = torch.FloatTensor(anchors)
